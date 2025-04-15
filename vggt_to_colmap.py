@@ -82,7 +82,20 @@ def process_images(image_dir, model, device):
         normalized_images[i] = resized_img / 255.0
     
     predictions["images"] = normalized_images
-    
+
+    # Save downscaled images to a subfolder within the input directory
+    downscaled_image_dir = os.path.join(image_dir, "downscaled")
+    os.makedirs(downscaled_image_dir, exist_ok=True)
+
+    for original_path, img in zip(image_names, normalized_images):
+        original_filename = os.path.basename(original_path)
+        downscaled_image_path = os.path.join(downscaled_image_dir, original_filename)
+        # Convert the image from RGB to BGR before saving
+        bgr_image = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cv2.imwrite(downscaled_image_path, bgr_image)
+
+    print(f"Downscaled images saved to {downscaled_image_dir} with original filenames")
+
     return predictions, image_names
 
 def extrinsic_to_colmap_format(extrinsics):
@@ -422,7 +435,7 @@ def write_colmap_points3D_txt(file_path, points3D):
         f.write(f"# Number of points: {len(points3D)}, mean track length: {avg_track_length:.4f}\n")
         
         for point in points3D:
-            point_id = point["id"] + 1  
+            point_id = point["id"] + 1  # COLMAP uses 1-indexed point IDs
             x, y, z = point["xyz"]
             r, g, b = point["rgb"]
             error = point["error"]
@@ -463,17 +476,17 @@ def write_colmap_images_bin(file_path, quaternions, translations, image_points2D
     with open(file_path, 'wb') as fid:
         # Write number of images (uint64)
         fid.write(struct.pack('<Q', len(quaternions)))
-        
+
         for i in range(len(quaternions)):
             image_id = i + 1
             camera_id = i + 1
-            
+
             qw, qx, qy, qz = quaternions[i].astype(float)
             tx, ty, tz = translations[i].astype(float)
-            
+
             image_name = os.path.basename(image_names[i]).encode()
             points = image_points2D[i]
-            
+
             # Image ID (uint32)
             fid.write(struct.pack('<I', image_id))
             # Quaternion (double): qw, qx, qy, qz
@@ -482,17 +495,15 @@ def write_colmap_images_bin(file_path, quaternions, translations, image_points2D
             fid.write(struct.pack('<ddd', tx, ty, tz))
             # Camera ID (uint32)
             fid.write(struct.pack('<I', camera_id))
-            # Image name
-            fid.write(struct.pack('<I', len(image_name)))
-            fid.write(image_name)
-            
+            # Image name (null-terminated string)
+            fid.write(image_name + b'\x00')
+
             # Write number of 2D points (uint64)
             fid.write(struct.pack('<Q', len(points)))
-            
+
             # Write 2D points: x, y, point3D_id
             for x, y, point3d_id in points:
-                fid.write(struct.pack('<dd', float(x), float(y)))
-                fid.write(struct.pack('<Q', point3d_id + 1))
+                fid.write(struct.pack('<ddQ', float(x), float(y), point3d_id + 1))
 
 def write_colmap_points3D_bin(file_path, points3D):
     """Write 3D points and tracks to COLMAP points3D.bin format."""
