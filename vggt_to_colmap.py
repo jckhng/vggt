@@ -47,7 +47,8 @@ def process_images(image_dir, model, device):
     for img_path in image_names:
         img = Image.open(img_path).convert('RGB')
         original_images.append(np.array(img))
-    
+
+    width, height = original_images[0].shape[:2]
     images = load_and_preprocess_images(image_names).to(device)
     print(f"Preprocessed images shape: {images.shape}")
     
@@ -59,9 +60,15 @@ def process_images(image_dir, model, device):
             predictions = model(images)
 
     print("Converting pose encoding to camera parameters...")
-    extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], images.shape[-2:])
+
+    # original code operate on the downsampled image
+    extrinsic, intrinsic_downsampled = pose_encoding_to_extri_intri(predictions["pose_enc"], images.shape[-2:])
+    extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], [width, height])
+
+
     predictions["extrinsic"] = extrinsic
     predictions["intrinsic"] = intrinsic
+    predictions["intrinsic_downsampled"] = intrinsic_downsampled
 
     for key in predictions.keys():
         if isinstance(predictions[key], torch.Tensor):
@@ -69,7 +76,7 @@ def process_images(image_dir, model, device):
     
     print("Computing 3D points from depth maps...")
     depth_map = predictions["depth"]  # (S, H, W, 1)
-    world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsic"], predictions["intrinsic"])
+    world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsic"], predictions["intrinsic_downsampled"])
     predictions["world_points_from_depth"] = world_points
     
     predictions["original_images"] = original_images
@@ -400,7 +407,8 @@ def write_colmap_cameras_txt(file_path, intrinsics, image_width, image_height):
             cx = intrinsic[0, 2]
             cy = intrinsic[1, 2]
             
-            f.write(f"{camera_id} {model} {image_width} {image_height} {fx} {fy} {cx} {cy}\n")
+            # f.write(f"{camera_id} {model} {image_width} {image_height} {fx} {fy} {cx} {cy}\n")
+            f.write(f"{camera_id} {model} {2*cx} {2*cy} {fx} {fy} {cx} {cy}\n")
 
 def write_colmap_images_txt(file_path, quaternions, translations, image_points2D, image_names):
     """Write camera poses and keypoints to COLMAP images.txt format."""
@@ -464,9 +472,14 @@ def write_colmap_cameras_bin(file_path, intrinsics, image_width, image_height):
             # Model ID (uint32)
             fid.write(struct.pack('<I', model_id))
             # Width (uint64)
-            fid.write(struct.pack('<Q', image_width))
+            fid.write(struct.pack('<Q', int(2*cx)))
             # Height (uint64)
-            fid.write(struct.pack('<Q', image_height))
+            fid.write(struct.pack('<Q', int(2*cy)))
+
+            # # Width (uint64)
+            # fid.write(struct.pack('<Q', image_width))
+            # # Height (uint64)
+            # fid.write(struct.pack('<Q', image_height))
             
             # Parameters (double)
             fid.write(struct.pack('<dddd', fx, fy, cx, cy))
